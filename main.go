@@ -6,6 +6,7 @@ import (
 	"multi/receive/internal/infrastructure"
 	"net/http"
 	"os"
+	"time"
 
 	MQTT "github.com/eclipse/paho.mqtt.golang"
 	"github.com/joho/godotenv"
@@ -14,39 +15,63 @@ import (
 func main() {
 	err := godotenv.Load()
 	if err != nil {
-		log.Println("⚠️ No se pudo cargar el archivo .env, usando variables del sistema")
+		log.Println("⚠️ No se pudo cargar .env, usando variables del sistema")
 	}
 
-	// Initialize repositories and services
+	// Crear repositorio y servicio
 	repository := infrastructure.NewSensorRepository()
 	sensorService := application.NewSensorService(repository)
-	mqttAdapter := infrastructure.NewMQTTAdapter(sensorService)
+
+	// Crear WebSocket
 	wsAdapter := infrastructure.NewWebSocketAdapter(sensorService)
 
-	// Setup MQTT
+	// Crear MQTTAdapter con referencia al WebSocket
+	mqttAdapter := infrastructure.NewMQTTAdapter(sensorService, wsAdapter)
+
+	// Configurar MQTT
 	broker := os.Getenv("RABBITMQ_URL")
 	topic := os.Getenv("RABBITMQ_QUEUE_IN")
 
-	if broker == "" || topic == "" {
-		log.Fatal("❌ ERROR: RABBITMQ_URL o RABBITMQ_QUEUE_IN no están configurados en el .env")
-	}
+	log.Printf("🔄 Conectando a broker MQTT: %s", broker)
+	log.Printf("📩 Topic a suscribir: %s", topic)
 
 	opts := MQTT.NewClientOptions()
 	opts.AddBroker(broker)
-	opts.SetClientID("COLAEVENTDRIVE")
+	opts.SetClientID("COLAEVENTDRIVE_" + time.Now().Format("20060102150405"))
 	opts.SetDefaultPublishHandler(mqttAdapter.MessageHandler)
+	opts.SetAutoReconnect(true)
+	opts.SetMaxReconnectInterval(5 * time.Second)
 
+	// Handler para pérdida de conexión
+	opts.SetConnectionLostHandler(func(client MQTT.Client, err error) {
+		log.Printf("❌ Conexión perdida: %v", err)
+	})
+
+	// Handler para conexión exitosa
+	opts.SetOnConnectHandler(func(client MQTT.Client) {
+		log.Println("✅ Conectado exitosamente al broker MQTT")
+		token := client.Subscribe(topic, 1, mqttAdapter.MessageHandler)
+		token.Wait()
+		if token.Error() != nil {
+			log.Printf("❌ Error al suscribirse: %v", token.Error())
+		} else {
+			log.Printf("✅ Suscrito exitosamente al topic: %s", topic)
+		}
+	})
+
+	// Conectar al broker MQTT
 	client := MQTT.NewClient(opts)
 	if token := client.Connect(); token.Wait() && token.Error() != nil {
-		log.Fatalf("❌ Error al conectar con el broker MQTT: %v", token.Error())
+		log.Fatalf("❌ Error al conectar: %v", token.Error())
 	}
 	defer client.Disconnect(250)
 
+	// Suscribirse al topic
 	if token := client.Subscribe(topic, 1, mqttAdapter.MessageHandler); token.Wait() && token.Error() != nil {
-		log.Fatalf("❌ Error al suscribirse al tópico: %v", token.Error())
+		log.Fatalf("❌ Error al suscribirse: %v", token.Error())
 	}
 
-	// Setup WebSocket
+	// Iniciar WebSocket
 	http.HandleFunc("/ws", wsAdapter.HandleWebSocket)
 	wsPort := os.Getenv("WEBSOCKET_PORT")
 	if wsPort == "" {
@@ -54,12 +79,14 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("🌐 WebSocket server starting on port %s...", wsPort)
+		log.Printf("🌐 Servidor WebSocket iniciado en puerto %s", wsPort)
 		if err := http.ListenAndServe(":"+wsPort, nil); err != nil {
-			log.Fatalf("❌ WebSocket server error: %v", err)
+			log.Fatalf("❌ Error en WebSocket: %v", err)
 		}
 	}()
 
-	log.Println(" [*] ✅ Esperando mensajes en MQTT. Presiona CTRL+C para salir.")
+	log.Println("✅ Servidor iniciado y esperando mensajes...")
+
+	// Mantener la aplicación corriendo
 	select {}
 }

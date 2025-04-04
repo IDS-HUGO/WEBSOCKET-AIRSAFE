@@ -63,6 +63,8 @@ func (w *WebSocketAdapter) HandleWebSocket(resp http.ResponseWriter, req *http.R
 			continue
 		}
 
+		log.Printf("📥 Received request for ID: %d with phone: %s", wsRequest.ID, wsRequest.PhoneNumber)
+
 		sensorData, exists := w.sensorService.GetSensorData(wsRequest.ID)
 		if !exists {
 			log.Printf("⚠️ No sensor data found for ID: %d", wsRequest.ID)
@@ -79,6 +81,8 @@ func (w *WebSocketAdapter) HandleWebSocket(resp http.ResponseWriter, req *http.R
 			continue
 		}
 
+		log.Printf("✅ Sent sensor data for ID %d to client", wsRequest.ID)
+
 		go w.sendToExternalAPIs(sensorData, wsRequest.PhoneNumber)
 	}
 }
@@ -89,26 +93,6 @@ func sendErrorResponse(conn *websocket.Conn, message string) {
 	}
 	if err := conn.WriteJSON(response); err != nil {
 		log.Printf("❌ Error sending error response: %v", err)
-	}
-}
-
-func (w *WebSocketAdapter) BroadcastSensorData(data *domain.SensorData) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	payload, err := json.Marshal(data)
-	if err != nil {
-		log.Printf("❌ Error al serializar JSON: %v", err)
-		return
-	}
-
-	for conn := range w.clients {
-		err := conn.WriteMessage(websocket.TextMessage, payload)
-		if err != nil {
-			log.Printf("❌ Error enviando mensaje WebSocket: %v", err)
-			conn.Close()
-			delete(w.clients, conn)
-		}
 	}
 }
 
@@ -153,5 +137,25 @@ func (w *WebSocketAdapter) sendToExternalAPIs(data *domain.SensorData, phoneNumb
 
 		log.Printf("✅ Data sent successfully to %s", url)
 		resp.Body.Close()
+	}
+}
+
+func (w *WebSocketAdapter) BroadcastSensorData(data *domain.SensorData) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	payload, err := json.Marshal(data)
+	if err != nil {
+		log.Printf("❌ Error al serializar JSON: %v", err)
+		return
+	}
+
+	for conn := range w.clients {
+		err := conn.WriteMessage(websocket.TextMessage, payload)
+		if err != nil {
+			log.Printf("❌ Error enviando mensaje WebSocket: %v", err)
+			conn.Close()
+			delete(w.clients, conn)
+		}
 	}
 }

@@ -18,17 +18,14 @@ func main() {
 		log.Println("⚠️ No se pudo cargar .env, usando variables del sistema")
 	}
 
-	// Crear repositorio y servicio
 	repository := infrastructure.NewSensorRepository()
 	sensorService := application.NewSensorService(repository)
 
-	// Crear WebSocket
 	wsAdapter := infrastructure.NewWebSocketAdapter(sensorService)
 
-	// Crear MQTTAdapter con referencia al WebSocket
-	mqttAdapter := infrastructure.NewMQTTAdapter(sensorService, wsAdapter)
+	smsService := infrastructure.NewTwilioSMSService()
+	mqttAdapter := infrastructure.NewMQTTAdapter(sensorService, wsAdapter, smsService)
 
-	// Configurar MQTT
 	broker := os.Getenv("RABBITMQ_URL")
 	topic := os.Getenv("RABBITMQ_QUEUE_IN")
 
@@ -42,12 +39,10 @@ func main() {
 	opts.SetAutoReconnect(true)
 	opts.SetMaxReconnectInterval(5 * time.Second)
 
-	// Handler para pérdida de conexión
 	opts.SetConnectionLostHandler(func(client MQTT.Client, err error) {
 		log.Printf("❌ Conexión perdida: %v", err)
 	})
 
-	// Handler para conexión exitosa
 	opts.SetOnConnectHandler(func(client MQTT.Client) {
 		log.Println("✅ Conectado exitosamente al broker MQTT")
 		token := client.Subscribe(topic, 1, mqttAdapter.MessageHandler)
@@ -59,19 +54,16 @@ func main() {
 		}
 	})
 
-	// Conectar al broker MQTT
 	client := MQTT.NewClient(opts)
 	if token := client.Connect(); token.Wait() && token.Error() != nil {
 		log.Fatalf("❌ Error al conectar: %v", token.Error())
 	}
 	defer client.Disconnect(250)
 
-	// Suscribirse al topic
 	if token := client.Subscribe(topic, 1, mqttAdapter.MessageHandler); token.Wait() && token.Error() != nil {
 		log.Fatalf("❌ Error al suscribirse: %v", token.Error())
 	}
 
-	// Iniciar WebSocket
 	http.HandleFunc("/ws", wsAdapter.HandleWebSocket)
 	wsPort := os.Getenv("WEBSOCKET_PORT")
 	if wsPort == "" {
@@ -86,7 +78,5 @@ func main() {
 	}()
 
 	log.Println("✅ Servidor iniciado y esperando mensajes...")
-
-	// Mantener la aplicación corriendo
 	select {}
 }

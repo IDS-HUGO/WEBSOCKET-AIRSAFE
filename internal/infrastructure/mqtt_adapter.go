@@ -78,7 +78,7 @@ func (m *MQTTAdapter) MessageHandler(client MQTT.Client, msg MQTT.Message) {
 	maxLevel, _ := strconv.ParseFloat(os.Getenv("GAS_ALERT_MAX"), 64)
 
 	if sensorData.GasInflamable >= minLevel && sensorData.GasInflamable <= maxLevel {
-		alertMsg := fmt.Sprintf("⚠️ ALERTA: Nivel de gas inflamable peligroso detectado: %.2f PPM en el sensor %d",
+		alertMsg := fmt.Sprintf("⚠️ ALERTA: Nivel de gas inflamable peligroso detectado. Concentración mayor a %.2f PPM en el sensor %d",
 			sensorData.GasInflamable, sensorData.ID)
 		phoneNumber := os.Getenv("ALERT_PHONE_NUMBER")
 
